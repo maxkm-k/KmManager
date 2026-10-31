@@ -28,7 +28,12 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Create Project Configuration (pubspec.yaml)
+      - name: Initialize Proper Flutter Android Project Structure
+        run: |
+          # Create full template structure with Android folders
+          flutter create . --org com.km.manager --project-name km_manager --platforms=android
+
+      - name: Overwrite pubspec.yaml with Dependencies
         run: |
           cat << 'EOF' > pubspec.yaml
           name: km_manager
@@ -55,9 +60,8 @@ jobs:
             uses-material-design: true
           EOF
 
-      - name: Create App Source Code (lib/main.dart)
+      - name: Write App Source Code (lib/main.dart)
         run: |
-          mkdir -p lib
           cat << 'EOF' > lib/main.dart
           import 'dart:io';
           import 'package:flutter/material.dart';
