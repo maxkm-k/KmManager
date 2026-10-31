@@ -63,6 +63,21 @@ jobs:
             uses-material-design: true
           EOF
 
+      - name: Inject Android Permissions in AndroidManifest.xml
+        run: |
+          MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
+          # Insert uses-permission tags right before the <application> tag
+          sed -i '/<application/i \
+              <uses-permission android:name="android.permission.INTERNET"/>\
+              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>\
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\
+              <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>' "$MANIFEST_PATH"
+          
+          # Add android:requestLegacyExternalStorage="true" into the <application> tag
+          sed -i 's/<application/<application android:requestLegacyExternalStorage="true"/g' "$MANIFEST_PATH"
+
       - name: Write App Source Code (lib/main.dart)
         run: |
           cat << 'EOF' > lib/main.dart
@@ -132,7 +147,7 @@ jobs:
                         TextButton(
                           onPressed: () async {
                             Navigator.pop(context);
-                            await openAppSettings(); // Opens actual system app settings page
+                            await openAppSettings();
                           },
                           child: const Text("Open Settings"),
                         ),
@@ -217,7 +232,7 @@ jobs:
                 }
               } catch (e) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text("Cannot access path: $e")),
+                  SnackBar(content: Text("Cannot access path (Restricted by Android/data policy): $e")),
                 );
               }
             }
