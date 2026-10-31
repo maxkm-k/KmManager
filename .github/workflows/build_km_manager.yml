@@ -28,18 +28,12 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Check Flutter Version
-        run: flutter --version
-
-      - name: Initialize Proper Flutter Android Project Structure
+      - name: Force Clean Flutter Project Initialization
         run: |
-          if [ ! -f "pubspec.yaml" ]; then
-            flutter create . --org com.km.manager --project-name km_manager --platforms=android
-          else
-            flutter create . --platforms=android
-          fi
+          rm -rf pubspec.yaml lib android ios web windows macos linux
+          flutter create . --org com.km.manager --project-name km_manager --platforms=android
 
-      - name: Overwrite pubspec.yaml with Dependencies
+      - name: Write pubspec.yaml with Dependencies
         run: |
           cat << 'EOF' > pubspec.yaml
           name: km_manager
@@ -74,17 +68,15 @@ jobs:
       - name: Inject Android Permissions in AndroidManifest.xml
         run: |
           MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST_PATH" ]; then
-            sed -i '/<application/i \
-                <uses-permission android:name="android.permission.INTERNET"/>\
-                <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>\
-                <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\
-                <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\
-                <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\
-                <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>' "$MANIFEST_PATH"
-            
-            sed -i 's/<application/<application android:requestLegacyExternalStorage="true"/g' "$MANIFEST_PATH"
-          fi
+          sed -i '/<application/i \
+              <uses-permission android:name="android.permission.INTERNET"/>\
+              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>\
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\
+              <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>' "$MANIFEST_PATH"
+          
+          sed -i 's/<application/<application android:requestLegacyExternalStorage="true"/g' "$MANIFEST_PATH"
 
       - name: Write App Source Code (lib/main.dart)
         run: |
@@ -599,3 +591,80 @@ jobs:
             void initState() {
               super.initState();
               _getIpAddress();
+            }
+
+            Future<void> _getIpAddress() async {
+              final info = NetworkInfo();
+              String? wifiIp = await info.getWifiIP();
+              setState(() {
+                serverIp = wifiIp ?? "127.0.0.1 (Check Wi-Fi)";
+              });
+            }
+
+            void _toggleWifiServer() async {
+              if (serverRunning) {
+                await _server?.close(force: true);
+                setState(() {
+                  serverRunning = false;
+                });
+              } else {
+                try {
+                  final router = sr.Router();
+                  router.get('/', (shelf.Request request) {
+                    return shelf.Response.ok('<html><body><h1>Km Manager File Server Active</h1><p>Browse mobile files securely.</p></body></html>', headers: {'content-type': 'text/html'});
+                  });
+
+                  _server = await shelf_io.serve(router.call, InternetAddress.anyIPv4, 2221);
+                  setState(() {
+                    serverRunning = true;
+                  });
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error starting server: $e")));
+                }
+              }
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text("WiFi Server & FTP Sharing", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 10),
+                    Text("Device IP: $serverIp", style: const TextStyle(fontSize: 14, color: Colors.blueAccent)),
+                    const SizedBox(height: 5),
+                    Text(serverRunning ? "Server Running on Port: 2221" : "Server Stopped", style: TextStyle(color: serverRunning ? Colors.green : Colors.red)),
+                    const SizedBox(height: 20),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(backgroundColor: serverRunning ? Colors.red : Colors.green),
+                      onPressed: _toggleWifiServer,
+                      icon: Icon(serverRunning ? Icons.stop : Icons.play_arrow),
+                      label: Text(serverRunning ? "Stop WiFi Server (Port 2221)" : "Start WiFi Server (Port 2221)"),
+                    ),
+                    const Divider(height: 40),
+                    const Text("Network Folder Connection", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 10),
+                    const TextField(
+                      decoration: InputDecoration(labelText: "Remote FTP / Network URL", border: OutlineInputBorder()),
+                    ),
+                    const SizedBox(height: 10),
+                    ElevatedButton(onPressed: () {}, child: const Text("Connect Network Folder")),
+                  ],
+                ),
+              );
+            }
+          }
+          EOF
+
+      - name: Build Android Release APK
+        run: |
+          flutter pub get
+          flutter build apk --release
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Km-Manager-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
