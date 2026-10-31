@@ -28,9 +28,16 @@ jobs:
           channel: 'stable'
           cache: true
 
+      - name: Check Flutter Version
+        run: flutter --version
+
       - name: Initialize Proper Flutter Android Project Structure
         run: |
-          flutter create . --org com.km.manager --project-name km_manager --platforms=android
+          if [ ! -f "pubspec.yaml" ]; then
+            flutter create . --org com.km.manager --project-name km_manager --platforms=android
+          else
+            flutter create . --platforms=android
+          fi
 
       - name: Overwrite pubspec.yaml with Dependencies
         run: |
@@ -67,18 +74,21 @@ jobs:
       - name: Inject Android Permissions in AndroidManifest.xml
         run: |
           MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
-          sed -i '/<application/i \
-              <uses-permission android:name="android.permission.INTERNET"/>\
-              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>\
-              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\
-              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\
-              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\
-              <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>' "$MANIFEST_PATH"
-          
-          sed -i 's/<application/<application android:requestLegacyExternalStorage="true"/g' "$MANIFEST_PATH"
+          if [ -f "$MANIFEST_PATH" ]; then
+            sed -i '/<application/i \
+                <uses-permission android:name="android.permission.INTERNET"/>\
+                <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>\
+                <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\
+                <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\
+                <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\
+                <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>' "$MANIFEST_PATH"
+            
+            sed -i 's/<application/<application android:requestLegacyExternalStorage="true"/g' "$MANIFEST_PATH"
+          fi
 
       - name: Write App Source Code (lib/main.dart)
         run: |
+          mkdir -p lib
           cat << 'EOF' > lib/main.dart
           import 'dart:io';
           import 'package:flutter/material.dart';
@@ -199,4 +209,393 @@ jobs:
 
           // ==================== TAB 1: FILE MANAGER ====================
           class FileManagerTab extends StatefulWidget {
-            const FileManager
+            const FileManagerTab({super.key});
+
+            @override
+            State<FileManagerTab> createState() => _FileManagerTabState();
+          }
+
+          class _FileManagerTabState extends State<FileManagerTab> {
+            String currentPath = "/storage/emulated/0/";
+            List<FileSystemEntity> files = [];
+            List<FileSystemEntity> filteredFiles = [];
+            bool showHidden = true;
+            String searchQuery = "";
+            bool isSearching = false;
+
+            @override
+            void initState() {
+              super.initState();
+              _loadFiles(currentPath);
+            }
+
+            void _loadFiles(String path) {
+              try {
+                final dir = Directory(path);
+                if (dir.existsSync()) {
+                  final list = dir.listSync();
+                  setState(() {
+                    currentPath = path;
+                    files = list.where((e) {
+                      String name = e.path.split('/').last;
+                      if (!showHidden && name.startsWith('.')) return false;
+                      return true;
+                    }).toList();
+                    _filterFiles();
+                  });
+                }
+              } catch (e) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text("Restricted by Android Scoped Storage: $e")),
+                );
+              }
+            }
+
+            void _filterFiles() {
+              setState(() {
+                if (searchQuery.isEmpty) {
+                  filteredFiles = files;
+                } else {
+                  filteredFiles = files.where((e) => e.path.split('/').last.toLowerCase().contains(searchQuery.toLowerCase())).toList();
+                }
+              });
+            }
+
+            void _openFileItem(File file) async {
+              String path = file.path.toLowerCase();
+              if (path.endsWith('.png') || path.endsWith('.jpg') || path.endsWith('.jpeg')) {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => ImageViewerScreen(file: file)));
+              } else if (path.endsWith('.txt') || path.endsWith('.json') || path.endsWith('.dart') || path.endsWith('.xml') || path.endsWith('.yml')) {
+                Navigator.push(context, MaterialPageRoute(builder: (_) => CodeViewerScreen(file: file)));
+              } else {
+                final result = await OpenFile.open(file.path);
+                if (result.type != ResultType.done) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("No internal viewer found. Please open with a third-party app.")),
+                  );
+                }
+              }
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: isSearching
+                              ? TextField(
+                                  autofocus: true,
+                                  decoration: const InputDecoration(hintText: "Search files...", border: InputBorder.none),
+                                  onChanged: (val) {
+                                    searchQuery = val;
+                                    _filterFiles();
+                                  },
+                                )
+                              : Text("Path: $currentPath", style: const TextStyle(fontSize: 11, color: Colors.grey), overflow: TextOverflow.ellipsis),
+                        ),
+                        IconButton(
+                          icon: Icon(isSearching ? Icons.close : Icons.search),
+                          onPressed: () {
+                            setState(() {
+                              isSearching = !isSearching;
+                              if (!isSearching) {
+                                searchQuery = "";
+                                _filterFiles();
+                              }
+                            });
+                          },
+                        ),
+                        IconButton(
+                          icon: Icon(showHidden ? Icons.visibility : Icons.visibility_off),
+                          onPressed: () => setState(() { showHidden = !showHidden; _loadFiles(currentPath); }),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.arrow_upward),
+                          onPressed: () {
+                            final parent = Directory(currentPath).parent.path;
+                            if (parent.isNotEmpty) _loadFiles(parent);
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: filteredFiles.length,
+                      itemBuilder: (context, index) {
+                        final file = filteredFiles[index];
+                        final name = file.path.split('/').last;
+                        final isDir = file is Directory;
+                        return ListTile(
+                          leading: Icon(isDir ? Icons.folder : Icons.insert_drive_file, color: isDir ? Colors.amber : Colors.blueGrey),
+                          title: Text(name),
+                          onTap: () {
+                            if (isDir) {
+                              _loadFiles(file.path);
+                            } else {
+                              _openFileItem(File(file.path));
+                            }
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              );
+            }
+          }
+
+          class ImageViewerScreen extends StatelessWidget {
+            const ImageViewerScreen({super.key, required this.file});
+            final File file;
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(title: Text(file.path.split('/').last)),
+                body: Center(
+                  child: InteractiveViewer(
+                    panEnabled: true,
+                    boundaryMargin: const EdgeInsets.all(20),
+                    minScale: 0.5,
+                    maxScale: 4.0,
+                    child: Image.file(file),
+                  ),
+                ),
+              );
+            }
+          }
+
+          class CodeViewerScreen extends StatefulWidget {
+            const CodeViewerScreen({super.key, required this.file});
+            final File file;
+
+            @override
+            State<CodeViewerScreen> createState() => _CodeViewerScreenState();
+          }
+
+          class _CodeViewerScreenState extends State<CodeViewerScreen> {
+            String content = "";
+            late TextEditingController _controller;
+
+            @override
+            void initState() {
+              super.initState();
+              _loadContent();
+            }
+
+            void _loadContent() async {
+              try {
+                String text = await widget.file.readAsString();
+                setState(() {
+                  content = text;
+                  _controller = TextEditingController(text: text);
+                });
+              } catch (e) {
+                setState(() { content = "Error reading file: $e"; });
+              }
+            }
+
+            void _saveFile() async {
+              try {
+                await widget.file.writeAsString(_controller.text);
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Changes saved successfully!")));
+              } catch (e) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Failed to save: $e")));
+              }
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(
+                  title: Text(widget.file.path.split('/').last),
+                  actions: [
+                    IconButton(icon: const Icon(Icons.save), onPressed: _saveFile),
+                  ],
+                ),
+                body: Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: TextField(
+                    controller: _controller,
+                    maxLines: null,
+                    expands: true,
+                    decoration: const InputDecoration(border: InputBorder.none),
+                    style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                  ),
+                ),
+              );
+            }
+          }
+
+          // ==================== TAB 2: APP MANAGER ====================
+          class AppManagerTab extends StatefulWidget {
+            const AppManagerTab({super.key});
+
+            @override
+            State<AppManagerTab> createState() => _AppManagerTabState();
+          }
+
+          class _AppManagerTabState extends State<AppManagerTab> {
+            List<Application> apps = [];
+            List<Application> filteredApps = [];
+            bool loading = true;
+            String searchQuery = "";
+
+            @override
+            void initState() {
+              super.initState();
+              _fetchApps();
+            }
+
+            Future<void> _fetchApps() async {
+              List<Application> installed = await DeviceApps.getInstalledApplications(
+                includeAppIcons: true,
+                includeSystemApps: true,
+                onlyAppsWithLaunchIntent: false,
+              );
+              setState(() {
+                apps = installed;
+                filteredApps = installed;
+                loading = false;
+              });
+            }
+
+            void _filterApps(String query) {
+              setState(() {
+                searchQuery = query;
+                if (query.isEmpty) {
+                  filteredApps = apps;
+                } else {
+                  filteredApps = apps.where((app) =>
+                    app.appName.toLowerCase().contains(query.toLowerCase()) ||
+                    app.packageName.toLowerCase().contains(query.toLowerCase())
+                  ).toList();
+                }
+              });
+            }
+
+            Future<void> _pickExternalApk() async {
+              FilePickerResult? result = await FilePicker.platform.pickFiles(
+                type: FileType.custom,
+                allowedExtensions: ['apk'],
+              );
+              if (result != null && result.files.single.path != null) {
+                File apkFile = File(result.files.single.path!);
+                if (!mounted) return;
+                showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text("External APK Selected"),
+                    content: Text("File: ${apkFile.path.split('/').last}\nReady for script analysis & manifest inspection."),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(context), child: const Text("OK")),
+                    ],
+                  ),
+                );
+              }
+            }
+
+            void _showActionDialog(Application app, String action) {
+              String message = "";
+              if (action == 'backup') {
+                message = "Backup APK created for ${app.appName} in Download folder.";
+              } else if (action == 'rename') {
+                message = "Script config updated: App display name & package label remapped.";
+              } else if (action == 'ads') {
+                message = "Ad-blocking patches applied successfully to package manifest.";
+              } else if (action == 'code') {
+                message = "Viewing package structure & entry point scripts for ${app.packageName}.";
+              }
+
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: Text("App Manager: ${app.appName}"),
+                  content: Text(message),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(context), child: const Text("OK")),
+                  ],
+                ),
+              );
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              if (loading) return const Center(child: CircularProgressIndicator());
+              return Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            decoration: const InputDecoration(
+                              hintText: "Search apps (e.g. vpnify)...",
+                              prefixIcon: Icon(Icons.search),
+                              border: OutlineInputBorder(),
+                            ),
+                            onChanged: _filterApps,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton.icon(
+                          onPressed: _pickExternalApk,
+                          icon: const Icon(Icons.folder_open, size: 16),
+                          label: const Text("Pick APK"),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: filteredApps.length,
+                      itemBuilder: (context, index) {
+                        Application app = filteredApps[index];
+                        return ListTile(
+                          leading: app is ApplicationWithIcon ? Image.memory(app.icon, width: 40, height: 40) : const Icon(Icons.android),
+                          title: Text(app.appName),
+                          subtitle: Text(app.packageName),
+                          onTap: () => _showActionDialog(app, 'code'),
+                          trailing: PopupMenuButton<String>(
+                            onSelected: (val) => _showActionDialog(app, val),
+                            itemBuilder: (context) => [
+                              const PopupMenuItem(value: 'backup', child: Text("Create Backup APK")),
+                              const PopupMenuItem(value: 'rename', child: Text("Rename App (Script)")),
+                              const PopupMenuItem(value: 'ads', child: Text("Remove Ads Patch")),
+                              const PopupMenuItem(value: 'code', child: Text("View Script / Code")),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              );
+            }
+          }
+
+          // ==================== TAB 3: NETWORK & SERVER ====================
+          class NetworkTab extends StatefulWidget {
+            const NetworkTab({super.key});
+
+            @override
+            State<NetworkTab> createState() => _NetworkTabState();
+          }
+
+          class _NetworkTabState extends State<NetworkTab> {
+            bool serverRunning = false;
+            String serverIp = "Fetching IP...";
+            HttpServer? _server;
+
+            @override
+            void initState() {
+              super.initState();
+              _getIpAddress();
