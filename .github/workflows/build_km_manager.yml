@@ -75,7 +75,7 @@ jobs:
           import 'package:network_info_plus/network_info_plus.dart';
           import 'package:shelf/shelf.dart' as shelf;
           import 'package:shelf/shelf_io.dart' as shelf_io;
-          import 'package:shelf_router/shelf_router.dart';
+          import 'package:shelf_router/shelf_router.dart' as sr;
 
           void main() {
             WidgetsFlutterBinding.ensureInitialized();
@@ -483,7 +483,7 @@ jobs:
                 });
               } else {
                 try {
-                  final router = Router();
+                  final router = sr.Router();
                   router.get('/', (shelf.Request request) {
                     return shelf.Response.ok('<html><body><h1>Km Manager File Server Active</h1><p>Browse mobile files securely.</p></body></html>', headers: {'content-type': 'text/html'});
                   });
