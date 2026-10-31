@@ -114,29 +114,27 @@ jobs:
             }
 
             Future<void> _checkAndRequestPermissions() async {
-              while (true) {
-                var status = await Permission.manageExternalStorage.status;
-                if (!status.isGranted) {
-                  status = await Permission.manageExternalStorage.request();
-                  if (!status.isGranted) {
-                    status = await Permission.storage.request();
-                  }
-                }
-                
-                if (status.isGranted) {
-                  break;
-                } else {
+              var status = await Permission.manageExternalStorage.status;
+              if (!status.isGranted) {
+                status = await Permission.manageExternalStorage.request();
+              }
+              if (!status.isGranted) {
+                var storageStatus = await Permission.storage.request();
+                if (!storageStatus.isGranted) {
                   if (!mounted) return;
                   await showDialog(
                     context: context,
                     barrierDismissible: false,
                     builder: (context) => AlertDialog(
                       title: const Text("Permission Required"),
-                      content: const Text("Km Manager requires file and folder access to operate as a file and app manager. Please grant storage permissions."),
+                      content: const Text("Km Manager requires storage access to view files and Android/data folders. Please enable storage permission in App Settings."),
                       actions: [
                         TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text("Grant Permission"),
+                          onPressed: () async {
+                            Navigator.pop(context);
+                            await openAppSettings(); // Opens actual system app settings page
+                          },
+                          child: const Text("Open Settings"),
                         ),
                       ],
                     ),
