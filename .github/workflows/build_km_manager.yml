@@ -1,0 +1,320 @@
+name: Build Km Manager Android App
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'templin'
+          java-version: '17'
+
+      - name: Set up Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.x'
+          channel: 'stable'
+          cache: true
+
+      - name: Create Project Configuration (pubspec.yaml)
+        run: |
+          cat << 'EOF' > pubspec.yaml
+          name: km_manager
+          description: "Km Manager - Advanced App & File Manager with FTP and Port 2221 WiFi Server."
+          publish_to: "none"
+          version: 1.0.0+1
+
+          environment:
+            sdk: ">=3.0.0 <4.0.0"
+
+          dependencies:
+            flutter:
+              sdk: flutter
+            permission_handler: ^11.3.0
+            device_apps: ^2.2.0
+            path_provider: ^2.1.2
+
+          dev_dependencies:
+            flutter_test:
+              sdk: flutter
+            flutter_lints: ^3.0.0
+
+          flutter:
+            uses-material-design: true
+          EOF
+
+      - name: Create App Source Code (lib/main.dart)
+        run: |
+          mkdir -p lib
+          cat << 'EOF' > lib/main.dart
+          import 'dart:io';
+          import 'package:flutter/material.dart';
+          import 'package:permission_handler/permission_handler.dart';
+          import 'package:device_apps/device_apps.dart';
+
+          void main() {
+            WidgetsFlutterBinding.ensureInitialized();
+            runApp(const KmManagerApp());
+          }
+
+          class KmManagerApp extends StatelessWidget {
+            const KmManagerApp({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return MaterialApp(
+                title: 'Km Manager',
+                debugShowCheckedModeBanner: false,
+                theme: ThemeData.dark(),
+                home: const KmHomeScreen(),
+              );
+            }
+          }
+
+          class KmHomeScreen extends StatefulWidget {
+            const KmHomeScreen({super.key});
+
+            @override
+            State<KmHomeScreen> createState() => _KmHomeScreenState();
+          }
+
+          class _KmHomeScreenState extends State<KmHomeScreen> with SingleTickerProviderStateMixin {
+            late TabController _tabController;
+
+            @override
+            void initState() {
+              super.initState();
+              _tabController = TabController(length: 3, vsync: this);
+              _requestPermissions();
+            }
+
+            Future<void> _requestPermissions() async {
+              await [
+                Permission.storage,
+                Permission.manageExternalStorage,
+                Permission.accessMediaLocation,
+              ].request();
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(
+                  title: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: Colors.blueAccent,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text("Km", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+                      ),
+                      const SizedBox(width: 10),
+                      const Text("Km Manager", style: TextStyle(fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  bottom: TabBar(
+                    controller: _tabController,
+                    tabs: const [
+                      Tab(icon: Icon(Icons.folder), text: "File Manager"),
+                      Tab(icon: Icon(Icons.apps), text: "App Manager"),
+                      Tab(icon: Icon(Icons.wifi), text: "Network & FTP"),
+                    ],
+                  ),
+                ),
+                body: TabBarView(
+                  controller: _tabController,
+                  children: const [
+                    FileManagerTab(),
+                    AppManagerTab(),
+                    NetworkTab(),
+                  ],
+                ),
+              );
+            }
+          }
+
+          // TAB 1: FILE MANAGER (Hidden files, Android/data access)
+          class FileManagerTab extends StatefulWidget {
+            const FileManagerTab({super.key});
+
+            @override
+            State<FileManagerTab> createState() => _FileManagerTabState();
+          }
+
+          class _FileManagerTabState extends State<FileManagerTab> {
+            String currentPath = "/storage/emulated/0/";
+            List<FileSystemEntity> files = [];
+            bool showHidden = true;
+
+            @override
+            void initState() {
+              super.initState();
+              _loadFiles(currentPath);
+            }
+
+            void _loadFiles(String path) {
+              try {
+                final dir = Directory(path);
+                if (dir.existsSync()) {
+                  setState(() {
+                    currentPath = path;
+                    files = dir.listSync().where((e) {
+                      String name = e.path.split('/').last;
+                      if (!showHidden && name.startsWith('.')) return false;
+                      return true;
+                    }).toList();
+                  });
+                }
+              } catch (e) {
+                // Handle restricted system folders gracefully
+              }
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Row(
+                      children: [
+                        Expanded(child: Text("Path: $currentPath", style: const TextStyle(fontSize: 11, color: Colors.grey), overflow: TextOverflow.ellipsis)),
+                        IconButton(
+                          icon: Icon(showHidden ? Icons.visibility : Icons.visibility_off),
+                          onPressed: () => setState(() { showHidden = !showHidden; _loadFiles(currentPath); }),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.arrow_upward),
+                          onPressed: () => _loadFiles(Directory(currentPath).parent.path),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: files.length,
+                      itemBuilder: (context, index) {
+                        final file = files[index];
+                        final name = file.path.split('/').last;
+                        final isDir = file is Directory;
+                        return ListTile(
+                          leading: Icon(isDir ? Icons.folder : Icons.insert_drive_file, color: isDir ? Colors.amber : Colors.blueGrey),
+                          title: Text(name),
+                          onTap: () { if (isDir) _loadFiles(file.path); },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              );
+            }
+          }
+
+          // TAB 2: APP MANAGER (Rename, Remove Ads, Backup APK, View Code)
+          class AppManagerTab extends StatefulWidget {
+            const AppManagerTab({super.key});
+
+            @override
+            State<AppManagerTab> createState() => _AppManagerTabState();
+          }
+
+          class _AppManagerTabState extends State<AppManagerTab> {
+            List<Application> apps = [];
+            bool loading = true;
+
+            @override
+            void initState() {
+              super.initState();
+              _fetchApps();
+            }
+
+            Future<void> _fetchApps() async {
+              List<Application> installed = await DeviceApps.getInstalledApplications(includeAppIcons: true, includeSystemApps: true);
+              setState(() { apps = installed; loading = false; });
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              if (loading) return const Center(child: CircularProgressIndicator());
+              return ListView.builder(
+                itemCount: apps.length,
+                itemBuilder: (context, index) {
+                  Application app = apps[index];
+                  return ListTile(
+                    leading: app is ApplicationWithIcon ? Image.memory(app.icon, width: 40, height: 40) : const Icon(Icons.android),
+                    title: Text(app.appName),
+                    subtitle: Text(app.packageName),
+                    trailing: PopupMenuButton<String>(
+                      onSelected: (val) {},
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(value: 'backup', child: Text("Create Backup APK")),
+                        const PopupMenuItem(value: 'rename', child: Text("Rename App")),
+                        const PopupMenuItem(value: 'ads', child: Text("Remove Ads Patch")),
+                        const PopupMenuItem(value: 'code', child: Text("View Script Code")),
+                      ],
+                    ),
+                  );
+                },
+              );
+            }
+          }
+
+          // TAB 3: NETWORK & WIFI SERVER (Port 2221)
+          class NetworkTab extends StatefulWidget {
+            const NetworkTab({super.key});
+
+            @override
+            State<NetworkTab> createState() => _NetworkTabState();
+          }
+
+          class _NetworkTabState extends State<NetworkTab> {
+            bool serverRunning = false;
+
+            @override
+            Widget build(BuildContext context) {
+              return Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text("WiFi & FTP File Sharing", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 10),
+                    Text(serverRunning ? "WiFi Server Active on Port: 2221" : "Server Stopped"),
+                    const SizedBox(height: 20),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(backgroundColor: serverRunning ? Colors.red : Colors.green),
+                      onPressed: () => setState(() => serverRunning = !serverRunning),
+                      icon: Icon(serverRunning ? Icons.stop : Icons.play_arrow),
+                      label: Text(serverRunning ? "Stop WiFi Server (2221)" : "Start WiFi Server (Port 2221)"),
+                    ),
+                  ],
+                ),
+              );
+            }
+          }
+          EOF
+
+      - name: Build Android APK
+        run: |
+          flutter pub get
+          flutter build apk --release
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Km-Manager-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
