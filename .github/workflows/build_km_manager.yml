@@ -126,7 +126,6 @@ jobs:
                 if (status.isGranted) {
                   break;
                 } else {
-                  // If permission revoked/denied, keep asking on startup
                   if (!mounted) return;
                   await showDialog(
                     context: context,
@@ -232,7 +231,6 @@ jobs:
               } else if (path.endsWith('.txt') || path.endsWith('.json') || path.endsWith('.dart') || path.endsWith('.xml') || path.endsWith('.yml')) {
                 Navigator.push(context, MaterialPageRoute(builder: (_) => CodeViewerScreen(file: file)));
               } else {
-                // Try opening PDF, docs, or media natively; fallback to third party
                 final result = await OpenFile.open(file.path);
                 if (result.type != ResultType.done) {
                   if (!mounted) return;
