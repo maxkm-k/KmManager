@@ -53,6 +53,9 @@ jobs:
             open_file: ^3.3.2
             network_info_plus: ^5.0.0
             file_picker: ^8.0.0
+            share_plus: ^9.0.0
+            pdf: ^3.10.8
+            printing: ^5.13.2
             shelf: ^1.4.1
             shelf_router: ^1.1.4
 
@@ -90,6 +93,10 @@ jobs:
           import 'package:open_file/open_file.dart';
           import 'package:network_info_plus/network_info_plus.dart';
           import 'package:file_picker/file_picker.dart';
+          import 'package:share_plus/share_plus.dart';
+          import 'package:pdf/pdf.dart' as pw_pdf;
+          import 'package:pdf/widgets.dart' as pw;
+          import 'package:printing/printing.dart';
           import 'package:shelf/shelf.dart' as shelf;
           import 'package:shelf/shelf_io.dart' as shelf_io;
           import 'package:shelf_router/shelf_router.dart' as sr;
@@ -222,7 +229,7 @@ jobs:
             }
 
             void _loadFiles(String path) async {
-              // Handle restricted Android/data or Android/obb via SAF Folder Picker intent
+              // Handle restricted Android/data or Android/obb via SAF Folder Picker
               if (path.endsWith('/Android/data') || path.endsWith('/Android/obb')) {
                 String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
                 if (selectedDirectory != null) {
@@ -230,7 +237,7 @@ jobs:
                 } else {
                   if (!mounted) return;
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Android/data access requires SAF permission grant.")),
+                    const SnackBar(content: Text("Android/data access requires SAF permission grant via picker.")),
                   );
                   return;
                 }
@@ -256,7 +263,7 @@ jobs:
                   context: context,
                   builder: (context) => AlertDialog(
                     title: const Text("Android Restricted Folder"),
-                    content: Text("Android blocks direct listing of this folder due to Scoped Storage. Tap below to use the system folder picker to access contents.\n\nError: $e"),
+                    content: Text("Android restricts direct folder traversal here. Tap below to use the official system folder picker to grant SAF access.\n\n$e"),
                     actions: [
                       TextButton(
                         onPressed: () async {
@@ -266,7 +273,7 @@ jobs:
                             _loadFiles(pickedDir);
                           }
                         },
-                        child: const Text("Use Folder Picker"),
+                        child: const Text("Open SAF Picker"),
                       ),
                       TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
                     ],
@@ -285,11 +292,48 @@ jobs:
               });
             }
 
+            void _renameItem(FileSystemEntity entity) {
+              TextEditingController nameController = TextEditingController(text: entity.path.split('/').last);
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text("Rename Item"),
+                  content: TextField(controller: nameController, decoration: const InputDecoration(labelText: "New Name")),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+                    TextButton(
+                      onPressed: () {
+                        try {
+                          String parentDir = Directory(entity.path).parent.path;
+                          String newPath = '$parentDir/${nameController.text}';
+                          entity.renameSync(newPath);
+                          Navigator.pop(context);
+                          _loadFiles(currentPath);
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Renamed successfully!")));
+                        } catch (e) {
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error renaming: $e")));
+                        }
+                      },
+                      child: const Text("Save"),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            void _shareItem(FileSystemEntity entity) {
+              if (entity is File) {
+                Share.shareXFiles([XFile(entity.path)], text: "Sharing file via Km Manager");
+              } else {
+                Share.share("Sharing folder path: ${entity.path}");
+              }
+            }
+
             void _openFileItem(File file) async {
               String path = file.path.toLowerCase();
               if (path.endsWith('.png') || path.endsWith('.jpg') || path.endsWith('.jpeg')) {
                 Navigator.push(context, MaterialPageRoute(builder: (_) => ImageViewerScreen(file: file)));
-              } else if (path.endsWith('.txt') || path.endsWith('.json') || path.endsWith('.dart') || path.endsWith('.xml') || path.endsWith('.yml')) {
+              } else if (path.endsWith('.txt') || path.endsWith('.json') || path.endsWith('.dart') || path.endsWith('.xml') || path.endsWith('.yml') || path.endsWith('.log')) {
                 Navigator.push(context, MaterialPageRoute(builder: (_) => CodeViewerScreen(file: file)));
               } else {
                 final result = await OpenFile.open(file.path);
@@ -365,6 +409,16 @@ jobs:
                               _openFileItem(File(file.path));
                             }
                           },
+                          trailing: PopupMenuButton<String>(
+                            onSelected: (val) {
+                              if (val == 'rename') _renameItem(file);
+                              if (val == 'share') _shareItem(file);
+                            },
+                            itemBuilder: (context) => [
+                              const PopupMenuItem(value: 'rename', child: Text("Rename")),
+                              const PopupMenuItem(value: 'share', child: Text("Share via WhatsApp / Email")),
+                            ],
+                          ),
                         );
                       },
                     ),
@@ -381,7 +435,30 @@ jobs:
             @override
             Widget build(BuildContext context) {
               return Scaffold(
-                appBar: AppBar(title: Text(file.path.split('/').last)),
+                appBar: AppBar(
+                  title: Text(file.path.split('/').last),
+                  actions: [
+                    IconButton(
+                      icon: const Icon(Icons.share),
+                      onPressed: () => Share.shareXFiles([XFile(file.path)]),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.print),
+                      onPressed: () async {
+                        await Printing.layoutPdf(
+                          onPdf: (format) async {
+                            final pdf = pw.Document();
+                            final image = pw.MemoryImage(file.readAsBytesSync());
+                            pdf.addPage(pw.Page(build: (pw.Context context) {
+                              return pw.Center(child: pw.Image(image));
+                            }));
+                            return pdf.save();
+                          },
+                        );
+                      },
+                    ),
+                  ],
+                ),
                 body: Center(
                   child: InteractiveViewer(
                     panEnabled: true,
@@ -435,12 +512,28 @@ jobs:
               }
             }
 
+            void _printPdf() async {
+              await Printing.layoutPdf(
+                onPdf: (format) async {
+                  final pdf = pw.Document();
+                  pdf.addPage(pw.Page(
+                    build: (pw.Context context) {
+                      return pw.Paragraph(text: _controller.text);
+                    },
+                  ));
+                  return pdf.save();
+                },
+              );
+            }
+
             @override
             Widget build(BuildContext context) {
               return Scaffold(
                 appBar: AppBar(
                   title: Text(widget.file.path.split('/').last),
                   actions: [
+                    IconButton(icon: const Icon(Icons.share), onPressed: () => Share.shareXFiles([XFile(widget.file.path)])),
+                    IconButton(icon: const Icon(Icons.print), onPressed: _printPdf),
                     IconButton(icon: const Icon(Icons.save), onPressed: _saveFile),
                   ],
                 ),
@@ -722,7 +815,7 @@ jobs:
                       label: Text(serverRunning ? "Stop WiFi Server (Port 2221)" : "Start WiFi Server (Port 2221)"),
                     ),
                     const Divider(height: 40),
-                    const Text("Network Folder Connection", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    const Text("Network Folder Connection", style: TextStyle(fontSize: 16, fontWeight:gers: FontWeight.bold)),
                     const SizedBox(height: 10),
                     const TextField(
                       decoration: InputDecoration(labelText: "Remote FTP / Network URL", border: OutlineInputBorder()),
