@@ -445,7 +445,7 @@ jobs:
                       icon: const Icon(Icons.print),
                       onPressed: () async {
                         await Printing.layoutPdf(
-                          layoutPdf: (format) async {
+                          onLayout: (format) async {
                             final pdf = pw.Document();
                             final image = pw.MemoryImage(file.readAsBytesSync());
                             pdf.addPage(pw.Page(build: (pw.Context context) {
@@ -513,7 +513,7 @@ jobs:
 
             void _printPdf() async {
               await Printing.layoutPdf(
-                layoutPdf: (format) async {
+                onLayout: (format) async {
                   final pdf = pw.Document();
                   pdf.addPage(pw.Page(
                     build: (pw.Context context) {
