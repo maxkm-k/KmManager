@@ -28,8 +28,9 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Initialize Android Project
+      - name: Force Clean Flutter Project Initialization
         run: |
+          rm -rf pubspec.yaml lib android ios web windows macos linux
           flutter create . --org com.km.manager --project-name km_manager --platforms=android
 
       - name: Write pubspec.yaml with Dependencies
@@ -70,17 +71,15 @@ jobs:
       - name: Inject Android Permissions in AndroidManifest.xml
         run: |
           MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST_PATH" ]; then
-            sed -i '/<application/i \
-                <uses-permission android:name="android.permission.INTERNET"/>\
-                <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>\
-                <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\
-                <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\
-                <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\
-                <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>' "$MANIFEST_PATH"
-            
-            sed -i 's/<application/<application android:requestLegacyExternalStorage="true"/g' "$MANIFEST_PATH"
-          fi
+          sed -i '/<application/i \
+              <uses-permission android:name="android.permission.INTERNET"/>\
+              <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>\
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>\
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\
+              <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>' "$MANIFEST_PATH"
+          
+          sed -i 's/<application/<application android:requestLegacyExternalStorage="true"/g' "$MANIFEST_PATH"
 
       - name: Write App Source Code (lib/main.dart)
         run: |
@@ -446,7 +445,7 @@ jobs:
                       icon: const Icon(Icons.print),
                       onPressed: () async {
                         await Printing.layoutPdf(
-                          onPdf: (format) async {
+                          layoutPdf: (format) async {
                             final pdf = pw.Document();
                             final image = pw.MemoryImage(file.readAsBytesSync());
                             pdf.addPage(pw.Page(build: (pw.Context context) {
@@ -514,7 +513,7 @@ jobs:
 
             void _printPdf() async {
               await Printing.layoutPdf(
-                onPdf: (format) async {
+                layoutPdf: (format) async {
                   final pdf = pw.Document();
                   pdf.addPage(pw.Page(
                     build: (pw.Context context) {
